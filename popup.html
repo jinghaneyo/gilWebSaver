@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 300px;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    .button {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      border: none;
+      border-radius: 5px;
+      background-color: #4CAF50;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .button:hover {
+      background-color: #45a049;
+    }
+    .button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+    .success {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .error {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+  </style>
+</head>
+<body>
+  <h3>gilWebSaver</h3>
+  
+  <button id="saveFullPage" class="button">전체 페이지 HTML로 저장</button>
+  
+  <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+  
+  <button id="toggleSelectMode" class="button" style="background-color: #2196F3;">영역 선택 모드</button>
+  <button id="saveSelection" class="button">선택된 영역 HTML로 저장</button>
+  <button id="clearSelection" class="button" style="background-color: #f44336;">선택 초기화</button>
+  
+  <div id="status" class="status" style="display: none;"></div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
