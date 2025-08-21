@@ -260,6 +260,14 @@ function handleClick(e) {
 // 선택 모드 활성화
 function enableSelectMode() {
   selectMode = true;
+  
+  // 이전에 선택된 요소들 초기화
+  selectedElements.clear();
+  document.querySelectorAll('.wcs-selected').forEach(el => {
+    el.classList.remove('wcs-selected');
+    removeSelectionBadge(el);
+  });
+  
   addSelectionStyles();
   
   document.addEventListener('mousemove', handleMouseMove);
@@ -270,7 +278,7 @@ function enableSelectMode() {
     el.classList.add('wcs-selectable');
   });
   
-  console.log('✅ Web Content Saver: 선택 모드 활성화');
+  console.log('✅ Web Content Saver: 선택 모드 활성화 - 이전 선택 초기화됨');
 }
 
 // 선택 모드 비활성화
@@ -388,12 +396,23 @@ function saveFullPage() {
 
 function saveSelection() {
   try {
+    console.log(`🔍 Web Content Saver: saveSelection 시작 - selectedElements.size: ${selectedElements.size}`);
+    
     if (selectedElements.size === 0) {
       throw new Error('선택된 요소가 없습니다.');
     }
     
+    // 선택된 요소들의 상세 정보 로깅
+    console.log('🔍 선택된 요소들:');
+    selectedElements.forEach((element, index) => {
+      console.log(`  ${index + 1}. ${element.tagName}${element.id ? '#' + element.id : ''}${element.className ? '.' + Array.from(element.classList).filter(cls => !cls.startsWith('wcs-')).join('.') : ''}`);
+    });
+    
     const title = document.title || 'webpage';
+    console.log('🔍 HTML 생성 시작...');
     const content = createSelectionHTML();
+    console.log(`🔍 HTML 생성 완료 - 길이: ${content.length}자`);
+    
     downloadContent(content, `${sanitizeFilename(title)}_selection.html`);
     console.log(`✅ Web Content Saver: ${selectedElements.size}개 요소 저장 완료`);
     
@@ -448,13 +467,34 @@ function createFullHTML() {
 }
 
 function createSelectionHTML() {
-  // 선택된 요소들을 포함할 HTML 생성
-  const selectedHTML = Array.from(selectedElements).map(element => {
+  console.log('🔍 createSelectionHTML 시작');
+  
+  // 선택된 요소들을 DOM 순서대로 정렬
+  const sortedElements = Array.from(selectedElements).sort((a, b) => {
+    const position = a.compareDocumentPosition(b);
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+  
+  console.log(`🔍 정렬된 요소 수: ${sortedElements.length}`);
+  
+  // 각 선택된 요소를 개별적으로 처리하되, 구조를 유지
+  const selectedHTML = sortedElements.map((element, index) => {
+    console.log(`🔍 요소 ${index + 1} 처리 중: ${element.tagName}${element.id ? '#' + element.id : ''}`);
+    
     const cloned = element.cloneNode(true);
     // 선택 관련 클래스 제거
     cloned.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
-    return cloned.outerHTML;
+    
+    const htmlContent = cloned.outerHTML;
+    console.log(`🔍 요소 ${index + 1} HTML 길이: ${htmlContent.length}자`);
+    
+    // 각 요소를 컨테이너로 감싸서 구조 보존
+    return `<div class="selected-content-item">${htmlContent}</div>`;
   }).join('\n\n');
+  
+  console.log(`🔍 전체 선택된 HTML 길이: ${selectedHTML.length}자`);
   
   // 현재 페이지의 스타일 수집
   let allCSS = '';
@@ -491,10 +531,18 @@ function createSelectionHTML() {
       font-size: 12px;
     }
     .selected-content {
-      border: 1px solid #ddd;
       padding: 20px;
-      margin-bottom: 20px;
       background: white;
+    }
+    .selected-content-item {
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eee;
+    }
+    .selected-content-item:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
     }
     ${allCSS}
   </style>
@@ -640,21 +688,29 @@ function convertImageToBase64(img) {
 
 function downloadContent(content, filename) {
   try {
+    console.log(`🔍 downloadContent 시작 - 파일명: ${filename}, 내용 길이: ${content.length}자`);
+    
     // Chrome Downloads API를 통한 다운로드
     const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
+    
+    console.log('🔍 Blob 생성 완료, background script로 다운로드 요청 중...');
     
     // background script로 다운로드 요청
     chrome.runtime.sendMessage({
       action: 'downloadFile',
       url: url,
       filename: filename
-    }, (response) => {
+    }, async (response) => {
       URL.revokeObjectURL(url);
       if (response && response.success) {
         console.log('✅ Web Content Saver: 다운로드 완료 -', filename);
+        console.log('🔍 다운로드된 파일 경로:', response.filePath);
+        
+        // PDF 변환 시도
+        await tryConvertToPdf(response.filePath, filename);
       } else {
-        console.error('❌ Web Content Saver: 다운로드 실패');
+        console.error('❌ Web Content Saver: 다운로드 실패:', response?.error || '알 수 없는 오류');
         // 실패시 기존 방식으로 시도
         fallbackDownload(content, filename);
       }
@@ -664,6 +720,60 @@ function downloadContent(content, filename) {
     console.error('Web Content Saver: 다운로드 오류 -', error.message);
     // 실패시 기존 방식으로 시도
     fallbackDownload(content, filename);
+  }
+}
+
+// PDF 변환 API 호출 함수
+async function tryConvertToPdf(htmlFilePath, originalFilename) {
+  try {
+    console.log('🔍 PDF 변환 서버 상태 확인 중...');
+    
+    // 서버 상태 확인을 건너뛰고 바로 PDF 변환 시도
+    console.log('✅ PDF 변환 서버로 직접 요청을 보냅니다.');
+    
+    // PDF 파일명 생성 (확장자를 .pdf로 변경)
+    const pdfFilename = originalFilename.replace(/\.html?$/i, '.pdf');
+    
+    console.log('🔍 PDF 변환 요청 중...');
+    console.log(`  - HTML 파일: ${htmlFilePath}`);
+    console.log(`  - PDF 파일명: ${pdfFilename}`);
+    
+    // 전송할 JSON 데이터 준비
+    const requestData = {
+      html_file_path: htmlFilePath,
+      output_filename: pdfFilename
+    };
+    
+    console.log('🔍 전송할 JSON 데이터:', JSON.stringify(requestData, null, 2));
+    console.log('🔍 POST 요청 URL: http://localhost:5000/convert-to-pdf');
+    console.log('🔍 요청 메서드: POST');
+    console.log('🔍 요청 헤더: Content-Type: application/json');
+    console.log('🔍 요청 바디 길이:', JSON.stringify(requestData).length, '바이트');
+    
+    // PDF 변환 요청
+    console.log('🚀 POST 요청 전송 시작...');
+    
+    console.log('🔍 background script를 통해 PDF 변환 요청 전송...');
+    
+    // background script를 통해 PDF 변환 요청
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        action: 'convertToPdf',
+        data: requestData
+      }, resolve);
+    });
+    
+    console.log('📥 background script 응답:', response);
+    
+    if (response && response.success) {
+      console.log('✅ PDF 변환 성공:', response.result);
+    } else {
+      console.error('❌ PDF 변환 실패:', response?.error || '알 수 없는 오류');
+    }
+    
+  } catch (error) {
+    console.error('❌ PDF 변환 중 오류 발생:', error.message);
+    console.log('ℹ️ HTML 파일은 정상적으로 저장되었습니다.');
   }
 }
 
@@ -683,9 +793,15 @@ function fallbackDownload(content, filename) {
     a.click();
     
     // 정리
-    setTimeout(() => {
+    setTimeout(async () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      // 대체 다운로드 후에도 PDF 변환 시도 (기본 다운로드 폴더 경로 추정)
+      const defaultDownloadPath = await getDefaultDownloadPath(filename);
+      if (defaultDownloadPath) {
+        await tryConvertToPdf(defaultDownloadPath, filename);
+      }
     }, 100);
     
     console.log('✅ Web Content Saver: 대체 다운로드 완료 -', filename);
@@ -710,4 +826,20 @@ function fallbackDownload(content, filename) {
 
 function sanitizeFilename(filename) {
   return filename.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
+}
+
+// 기본 다운로드 폴더 경로 추정
+async function getDefaultDownloadPath(filename) {
+  try {
+    // Windows 기본 다운로드 폴더 경로
+    const userProfile = 'C:\\Users\\' + (window.navigator.userAgent.includes('Windows') ? 'User' : 'User');
+    const downloadPath = `${userProfile}\\Downloads\\${filename}`;
+    
+    console.log('🔍 추정된 다운로드 경로:', downloadPath);
+    return downloadPath;
+    
+  } catch (error) {
+    console.log('기본 다운로드 경로 추정 실패:', error.message);
+    return null;
+  }
 }

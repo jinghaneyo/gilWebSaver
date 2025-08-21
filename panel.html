@@ -4,9 +4,31 @@
   <meta charset="utf-8">
   <style>
     body {
-      width: 300px;
+      width: 320px;
+      height: 400px;
       padding: 20px;
       font-family: Arial, sans-serif;
+      margin: 0;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    h3 {
+      margin: 0;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: #666;
+      padding: 5px;
+    }
+    .close-btn:hover {
+      color: #000;
     }
     .button {
       width: 100%;
@@ -40,32 +62,12 @@
       background-color: #f8d7da;
       color: #721c24;
     }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 15px;
-    }
-    h3 {
-      margin: 0;
-    }
-    .pin-btn {
-      background: none;
-      border: none;
-      font-size: 18px;
-      cursor: pointer;
-      color: #666;
-      padding: 5px;
-    }
-    .pin-btn:hover {
-      color: #4CAF50;
-    }
   </style>
 </head>
 <body>
   <div class="header">
     <h3>gilWebSaver</h3>
-    <button id="pinButton" class="pin-btn" title="메뉴 고정">📌</button>
+    <button id="closePanel" class="close-btn">✕</button>
   </div>
   
   <button id="saveFullPage" class="button">전체 페이지 HTML로 저장</button>
@@ -78,6 +80,6 @@
   
   <div id="status" class="status" style="display: none;"></div>
   
-  <script src="popup.js"></script>
+  <script src="panel.js"></script>
 </body>
 </html>

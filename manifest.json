@@ -8,10 +8,13 @@
     "storage", 
     "downloads",
     "tabs",
-    "scripting"
+    "scripting",
+    "windows",
+    "sidePanel"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:5000/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -25,5 +28,8 @@
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }

@@ -1,13 +1,14 @@
+let selectMode = false;
+
 document.addEventListener('DOMContentLoaded', async function() {
   const saveFullPageBtn = document.getElementById('saveFullPage');
   const toggleSelectModeBtn = document.getElementById('toggleSelectMode');
   const saveSelectionBtn = document.getElementById('saveSelection');
   const clearSelectionBtn = document.getElementById('clearSelection');
   const statusDiv = document.getElementById('status');
-  const pinButton = document.getElementById('pinButton');
   
   let selectModeActive = false;
-  
+
   // 페이지 로드 시 현재 선택 모드 상태 확인
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -40,7 +41,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     buttons.forEach(btn => btn.disabled = false);
   }
 
-  // 선택 모드 버튼 상태 업데이트
   function updateSelectModeButton() {
     if (selectModeActive) {
       toggleSelectModeBtn.textContent = '선택 모드 종료';
@@ -51,20 +51,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
   }
 
-  // Content script 로드 확인 및 주입 함수
   async function ensureContentScriptLoaded(tabId) {
     try {
-      // 먼저 ping을 보내서 content script가 응답하는지 확인
       await chrome.tabs.sendMessage(tabId, { action: 'ping' });
     } catch (error) {
-      // content script가 없으면 주입
       console.log('Content script 주입 중...');
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tabId },
           files: ['content.js']
         });
-        // 주입 후 잠시 대기
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (injectionError) {
         console.error('Content script 주입 실패:', injectionError);
@@ -101,20 +97,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     disableButtons();
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      // 먼저 content script가 로드되었는지 확인하고 필요시 주입
       await ensureContentScriptLoaded(tab.id);
       
       selectModeActive = !selectModeActive;
-      
-      console.log('선택 모드 전환 시도:', selectModeActive);
       
       const response = await chrome.tabs.sendMessage(tab.id, { 
         action: 'toggleSelectMode', 
         active: selectModeActive 
       });
-      
-      console.log('선택 모드 응답:', response);
       
       if (response && response.success) {
         updateSelectModeButton();
@@ -124,12 +114,10 @@ document.addEventListener('DOMContentLoaded', async function() {
           showStatus('✅ 선택 모드가 종료되었습니다.');
         }
       } else {
-        // 실패시 상태 되돌리기
         selectModeActive = !selectModeActive;
         showStatus(`❌ 선택 모드 전환 실패: ${response?.error || '알 수 없는 오류'}`, true);
       }
     } catch (error) {
-      // 실패시 상태 되돌리기
       selectModeActive = !selectModeActive;
       console.error('선택 모드 전환 오류:', error);
       showStatus(`❌ 선택 모드 전환 실패: ${error.message}`, true);
@@ -173,20 +161,6 @@ document.addEventListener('DOMContentLoaded', async function() {
       showStatus('초기화 실패', true);
     } finally {
       enableButtons();
-    }
-  });
-
-  // 메뉴 고정 버튼 (사이드 패널 열기)
-  pinButton.addEventListener('click', async () => {
-    try {
-      // 사이드 패널 열기
-      await chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
-      
-      // 현재 팝업 닫기
-      window.close();
-    } catch (error) {
-      showStatus('사이드 패널 열기 실패', true);
-      console.error('Side panel error:', error);
     }
   });
 });
