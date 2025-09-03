@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir)"
+      "Bash(dir)",
+      "Read(C:\\Users\\user\\Downloads/**)",
+      "Bash(dir \"C:\\Users\\user\\Downloads\\*.html\" /b /o:-d)",
+      "Read(C:\\Users\\user\\Downloads/**)"
     ],
     "deny": [],
     "ask": []

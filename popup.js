@@ -4,7 +4,6 @@ document.addEventListener('DOMContentLoaded', async function() {
   const saveSelectionBtn = document.getElementById('saveSelection');
   const clearSelectionBtn = document.getElementById('clearSelection');
   const statusDiv = document.getElementById('status');
-  const pinButton = document.getElementById('pinButton');
   
   let selectModeActive = false;
   
@@ -176,17 +175,4 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
   });
 
-  // 메뉴 고정 버튼 (사이드 패널 열기)
-  pinButton.addEventListener('click', async () => {
-    try {
-      // 사이드 패널 열기
-      await chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
-      
-      // 현재 팝업 닫기
-      window.close();
-    } catch (error) {
-      showStatus('사이드 패널 열기 실패', true);
-      console.error('Side panel error:', error);
-    }
-  });
 });
