@@ -169,11 +169,20 @@ gilWebSaver/
 - **Download failed**: Check Chrome's download permissions
 
 
+## Support This Project ☕
+--------------------------------------------------------------------------------
+If you find this extension useful, please consider supporting its development!
+
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=for-the-badge&logo=github)](https://github.com/sponsors/jinghaneyo)
+[![Ko-fi](https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/gilalee)
+
+**GitHub Sponsors** - Monthly support with 0% fees
+**Ko-fi** - One-time donations (buy me a coffee!)
+
+Your support helps maintain and improve this extension. Thank you! 💙
+
+
 ## License
 --------------------------------------------------------------------------------
 This is a personal project.
 
-
-================================================================================
-Last Updated: 2025-11-16
-================================================================================
