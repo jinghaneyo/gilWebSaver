@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "gilWebSaver",
   "version": "1.0",
-  "description": "웹 콘텐츠를 HTML 또는 PDF로 저장하는 확장 프로그램",
+  "description": "웹 콘텐츠를 HTML로 저장하는 확장 프로그램",
   "permissions": [
     "activeTab",
     "storage", 
@@ -13,8 +13,7 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "http://localhost:5000/*"
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",

@@ -3,9 +3,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'downloadFile') {
     downloadFile(request.url, request.filename, sendResponse);
     return true; // 비동기 응답을 위해 true 반환
-  } else if (request.action === 'convertToPdf') {
-    convertToPdf(request.data, sendResponse);
-    return true; // 비동기 응답을 위해 true 반환
   }
 });
 
@@ -71,39 +68,6 @@ function waitForDownloadComplete(downloadId) {
       reject(new Error('다운로드 타임아웃'));
     }, 10000);
   });
-}
-
-// PDF 변환 API 호출 함수
-async function convertToPdf(requestData, sendResponse) {
-  try {
-    console.log('🔍 Background: PDF 변환 요청 처리 시작');
-    console.log('🔍 Background: 요청 데이터:', JSON.stringify(requestData, null, 2));
-    
-    const response = await fetch('http://localhost:5000/convert-to-pdf', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(requestData)
-    });
-    
-    console.log('🔍 Background: 서버 응답 상태:', response.status, response.statusText);
-    
-    if (response.ok) {
-      const result = await response.json();
-      console.log('✅ Background: PDF 변환 성공:', result);
-      sendResponse({ success: true, result: result });
-    } else {
-      const error = await response.text();
-      console.error('❌ Background: PDF 변환 실패:', error);
-      sendResponse({ success: false, error: `HTTP ${response.status}: ${error}` });
-    }
-    
-  } catch (error) {
-    console.error('❌ Background: PDF 변환 중 오류:', error.message);
-    sendResponse({ success: false, error: error.message });
-  }
 }
 
 console.log('✅ Web Content Saver background script loaded');
