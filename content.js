@@ -397,25 +397,30 @@ async function saveFullPage() {
 async function saveSelection() {
   try {
     console.log(`🔍 Web Content Saver: saveSelection 시작 - selectedElements.size: ${selectedElements.size}`);
-    
+
     if (selectedElements.size === 0) {
       throw new Error('선택된 요소가 없습니다.');
     }
-    
+
     // 선택된 요소들의 상세 정보 로깅
     console.log('🔍 선택된 요소들:');
-    selectedElements.forEach((element, index) => {
-      console.log(`  ${index + 1}. ${element.tagName}${element.id ? '#' + element.id : ''}${element.className ? '.' + Array.from(element.classList).filter(cls => !cls.startsWith('wcs-')).join('.') : ''}`);
+    let index = 0;
+    selectedElements.forEach((element) => {
+      const classList = element.className && typeof element.className === 'string'
+        ? Array.from(element.classList).filter(cls => !cls.startsWith('wcs-')).join('.')
+        : '';
+      console.log(`  ${index + 1}. ${element.tagName}${element.id ? '#' + element.id : ''}${classList ? '.' + classList : ''}`);
+      index++;
     });
-    
+
     const title = document.title || 'webpage';
-    console.log('🔍 HTML 생성 시작...');
+    console.log('🔍 HTML 생성 시작 (원본 레이아웃 유지 모드)...');
     const content = await createSelectionHTML();
     console.log(`🔍 HTML 생성 완료 - 길이: ${content.length}자`);
-    
+
     downloadContent(content, `${sanitizeFilename(title)}_selection.html`);
-    console.log(`✅ Web Content Saver: ${selectedElements.size}개 요소 저장 완료`);
-    
+    console.log(`✅ Web Content Saver: ${selectedElements.size}개 요소 저장 완료 (원본 레이아웃 유지)`);
+
   } catch (error) {
     console.error('Web Content Saver: 선택 영역 저장 실패:', error);
     throw error;
@@ -481,168 +486,211 @@ async function createFullHTML() {
 }
 
 async function createSelectionHTML() {
-  console.log('🔍 createSelectionHTML 시작');
-  
-  // 선택된 요소들을 DOM 순서대로 정렬
-  const sortedElements = Array.from(selectedElements).sort((a, b) => {
-    const position = a.compareDocumentPosition(b);
-    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-    return 0;
+  console.log('🔍 createSelectionHTML 시작 - 조상 체인 유지 모드');
+
+  if (selectedElements.size === 0) {
+    throw new Error('선택된 요소가 없습니다.');
+  }
+
+  // 선택된 요소들의 고유 식별자 생성 (복제 전에 마킹)
+  const selectedIdentifiers = new Set();
+  const timestamp = Date.now();
+  let idx = 0;
+  selectedElements.forEach((element) => {
+    const uniqueId = `wcs-selected-${idx}-${timestamp}`;
+    element.setAttribute('data-wcs-selected-id', uniqueId);
+    selectedIdentifiers.add(uniqueId);
+    console.log(`🔍 선택된 요소 마킹: ${element.tagName}${element.id ? '#' + element.id : ''} -> ${uniqueId}`);
+    idx++;
   });
-  
-  console.log(`🔍 정렬된 요소 수: ${sortedElements.length}`);
-  
-  // 각 선택된 요소를 개별적으로 처리하되, 구조를 유지
-  const processedElements = await Promise.all(sortedElements.map(async (element, index) => {
-    console.log(`🔍 요소 ${index + 1} 처리 중: ${element.tagName}${element.id ? '#' + element.id : ''}`);
-    
-    const cloned = element.cloneNode(true);
-    // 선택 관련 클래스 제거
-    cloned.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
-    
-    // 이미지 다운로드 및 경로 변경
-    await downloadAndReplaceImages(cloned);
-    
-    const htmlContent = cloned.outerHTML;
-    console.log(`🔍 요소 ${index + 1} HTML 길이: ${htmlContent.length}자`);
-    
-    // 각 요소를 컨테이너로 감싸서 구조 보존
-    return `<div class="selected-content-item">${htmlContent}</div>`;
-  }));
-  
-  const selectedHTML = processedElements.join('\n\n');
-  
-  console.log(`🔍 전체 선택된 HTML 길이: ${selectedHTML.length}자`);
-  
-  // 현재 페이지의 모든 스타일 수집 (외부 CSS 포함)
-  let allCSS = '';
-  
-  const styleSheets = Array.from(document.styleSheets);
-  for (const sheet of styleSheets) {
-    try {
-      if (sheet.cssRules && sheet.cssRules.length > 0) {
-        // 내부 스타일 또는 접근 가능한 외부 스타일
-        Array.from(sheet.cssRules).forEach(rule => {
-          allCSS += rule.cssText + '\n';
-        });
-      } else if (sheet.href) {
-        // 외부 CSS 파일 다운로드 시도
-        try {
-          const response = await fetch(sheet.href);
-          if (response.ok) {
-            const cssContent = await response.text();
-            allCSS += cssContent + '\n';
-            console.log(`✅ 선택 영역용 외부 CSS 다운로드: ${sheet.href}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ 선택 영역용 외부 CSS 페치 실패: ${sheet.href}`);
-        }
+
+  // 전체 페이지를 복제 (마킹된 상태로)
+  const html = document.documentElement.cloneNode(true);
+  console.log('🎨 전체 페이지 복제 완료');
+
+  // 원본 요소에서 마커 제거 (복제 후 바로)
+  selectedElements.forEach(element => {
+    element.removeAttribute('data-wcs-selected-id');
+  });
+
+  // 복제된 HTML에서 선택된 요소들 찾기
+  const clonedSelectedElements = new Set();
+  selectedIdentifiers.forEach(id => {
+    const clonedElement = html.querySelector(`[data-wcs-selected-id="${id}"]`);
+    if (clonedElement) {
+      clonedSelectedElements.add(clonedElement);
+      // 마커는 나중에 제거 (조상 체인 수집 후)
+      console.log(`🔍 복제된 요소 찾음: ${clonedElement.tagName}${clonedElement.id ? '#' + clonedElement.id : ''}`);
+    } else {
+      console.warn(`⚠️ 복제된 요소를 찾지 못함: ${id}`);
+    }
+  });
+
+  console.log(`🔍 복제된 HTML에서 ${clonedSelectedElements.size}개 요소 찾음`);
+
+  if (clonedSelectedElements.size === 0) {
+    throw new Error('복제된 HTML에서 선택된 요소를 찾을 수 없습니다.');
+  }
+
+  // 선택된 요소들과 그 조상들을 수집 (복제된 DOM 기준)
+  const elementsToKeep = new Set();
+
+  // 선택된 요소와 모든 자손 추가
+  clonedSelectedElements.forEach(selected => {
+    elementsToKeep.add(selected);
+    // 모든 자손 요소 추가
+    selected.querySelectorAll('*').forEach(descendant => {
+      elementsToKeep.add(descendant);
+    });
+  });
+
+  // 선택된 요소들의 모든 조상 추가 (복제된 DOM에서)
+  clonedSelectedElements.forEach(selected => {
+    let parent = selected.parentElement;
+    while (parent) {
+      elementsToKeep.add(parent);
+      parent = parent.parentElement;
+    }
+  });
+
+  console.log(`🔍 유지할 요소 수: ${elementsToKeep.size}개`);
+
+  // 선택 마커 제거
+  clonedSelectedElements.forEach(el => {
+    el.removeAttribute('data-wcs-selected-id');
+  });
+
+  // body 내에서 불필요한 요소들 제거
+  const body = html.querySelector('body');
+  if (body) {
+    function removeUnneededElements(element) {
+      if (element.nodeType !== Node.ELEMENT_NODE) return;
+
+      // WCS 관련 요소는 무조건 제거
+      if (element.classList && (
+        element.classList.contains('wcs-tooltip') ||
+        element.classList.contains('wcs-selection-badge') ||
+        element.id === 'web-content-saver-styles'
+      )) {
+        element.remove();
+        return;
       }
-    } catch (e) {
-      // CORS 제한으로 인한 접근 불가
+
+      // 유지할 요소인지 확인
+      if (!elementsToKeep.has(element)) {
+        element.remove();
+        return;
+      }
+
+      // 유지할 요소면 선택 관련 클래스 제거하고 자식 처리
+      element.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
+
+      // 자식들을 배열로 복사하여 처리 (DOM 변경 중 안전하게)
+      Array.from(element.children).forEach(child => removeUnneededElements(child));
+    }
+
+    // body의 직계 자식들부터 처리
+    Array.from(body.children).forEach(child => removeUnneededElements(child));
+  }
+
+  // 선택 관련 스타일 제거
+  html.querySelectorAll('.wcs-hover, .wcs-selected, .wcs-selectable').forEach(el => {
+    el.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
+  });
+
+  // 선택 모드 스타일 제거
+  const selectionStyle = html.querySelector('#web-content-saver-styles');
+  if (selectionStyle) selectionStyle.remove();
+
+  // WCS 관련 클래스 모두 제거
+  html.querySelectorAll('[class*="wcs-"]').forEach(el => {
+    const classes = Array.from(el.classList);
+    classes.forEach(cls => {
+      if (cls.startsWith('wcs-')) {
+        el.classList.remove(cls);
+      }
+    });
+  });
+
+  // 배지, 툴팁 등 WCS 요소 제거
+  html.querySelectorAll('.wcs-selection-badge, .wcs-tooltip').forEach(el => el.remove());
+
+  // 스크립트 제거
+  html.querySelectorAll('script').forEach(script => script.remove());
+
+  console.log('🎨 CSS 수집 시작...');
+
+  // 모든 CSS 수집 및 임베드
+  await collectAndEmbedAllCSS(html);
+
+  console.log('🖼️ 이미지 처리 시작...');
+
+  // 선택된 요소들 내의 이미지만 처리
+  for (const element of clonedSelectedElements) {
+    await downloadAndReplaceImages(element);
+  }
+
+  // CSS 배경 이미지 처리 (선택된 요소들만)
+  for (const element of clonedSelectedElements) {
+    await processCSSBackgroundImagesForElement(element);
+  }
+
+  // 출처 정보 추가 (상단에)
+  const sourceInfo = document.createElement('div');
+  sourceInfo.setAttribute('data-wcs-source-info', 'true');
+  sourceInfo.style.cssText = `
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    background: #f5f5f5 !important;
+    padding: 8px 15px !important;
+    border-bottom: 2px solid #2196F3 !important;
+    font-size: 12px !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+    z-index: 99999 !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+  `;
+  sourceInfo.innerHTML = `
+    <strong>출처:</strong> ${window.location.href} |
+    <strong>저장 일시:</strong> ${new Date().toLocaleString()} |
+    <strong>선택된 요소:</strong> ${selectedElements.size}개
+  `;
+
+  const htmlBody = html.querySelector('body');
+  if (htmlBody) {
+    htmlBody.insertBefore(sourceInfo, htmlBody.firstChild);
+
+    // body에 상단 패딩 추가하여 출처 정보와 겹치지 않도록
+    const existingPaddingTop = parseInt(window.getComputedStyle(document.body).paddingTop) || 0;
+    htmlBody.style.paddingTop = (existingPaddingTop + 40) + 'px';
+  }
+
+  console.log('✅ 조상 체인 유지 선택 HTML 생성 완료 (파일 크기 최적화)');
+
+  // DOCTYPE 포함한 완전한 HTML 반환
+  return '<!DOCTYPE html>\n' + html.outerHTML;
+}
+
+// 특정 요소 내의 CSS 배경 이미지만 처리
+async function processCSSBackgroundImagesForElement(element) {
+  const allElements = element.querySelectorAll('*');
+  const elementsToProcess = [element, ...allElements];
+  const title = document.title || 'webpage';
+  const folderName = `${sanitizeFilename(title)}_files`;
+
+  for (let i = 0; i < elementsToProcess.length; i++) {
+    const el = elementsToProcess[i];
+    const style = el.getAttribute('style') || '';
+    const bgImageMatch = style.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/i);
+
+    if (bgImageMatch) {
+      const imageUrl = bgImageMatch[1];
+      if (!imageUrl.startsWith('data:')) {
+        await processSingleBackgroundImage(el, imageUrl, i, folderName);
+      }
     }
   }
-  
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Selected Content - ${document.title}</title>
-  <style>
-    /* 기본 레이아웃 스타일 */
-    * {
-      box-sizing: border-box;
-    }
-    
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-      line-height: 1.6;
-      margin: 20px;
-      padding: 20px;
-      background: white;
-    }
-    
-    .source-info {
-      background: #f5f5f5;
-      padding: 10px;
-      margin-bottom: 20px;
-      border-left: 4px solid #2196F3;
-      font-size: 12px;
-    }
-    
-    .selected-content-item {
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #eee;
-      /* 레이아웃 보존을 위한 기본 스타일 */
-      position: relative;
-      overflow: visible;
-    }
-    
-    .selected-content-item:last-child {
-      border-bottom: none;
-      margin-bottom: 0;
-      padding-bottom: 0;
-    }
-    
-    /* 이미지 반응형 처리 */
-    .selected-content-item img {
-      max-width: 100%;
-      height: auto;
-    }
-    
-    /* Flexbox 레이아웃 보존 */
-    .selected-content-item [style*="display: flex"],
-    .selected-content-item [class*="flex"],
-    .selected-content-item [class*="d-flex"] {
-      display: flex !important;
-    }
-    
-    /* Grid 레이아웃 보존 */
-    .selected-content-item [style*="display: grid"],
-    .selected-content-item [class*="grid"] {
-      display: grid !important;
-    }
-    
-    /* 원본 페이지의 모든 스타일 */
-    ${allCSS}
-    
-    /* 레이아웃 안정성을 위한 추가 스타일 */
-    .selected-content-item [style*="position: absolute"] {
-      position: relative !important;
-    }
-    
-    .selected-content-item [style*="position: fixed"] {
-      position: relative !important;
-    }
-    
-    /* 네이버 등 특정 사이트 대응 */
-    .selected-content-item .blind,
-    .selected-content-item [style*="overflow: hidden"][style*="width: 1px"] {
-      position: static !important;
-      width: auto !important;
-      height: auto !important;
-      overflow: visible !important;
-      clip: none !important;
-    }
-  </style>
-</head>
-<body>
-  <div class="source-info">
-    <strong>출처:</strong> ${window.location.href}<br>
-    <strong>저장 일시:</strong> ${new Date().toLocaleString()}<br>
-    <strong>선택된 요소 수:</strong> ${selectedElements.size}개
-  </div>
-  <div class="selected-content">
-    ${selectedHTML}
-  </div>
-</body>
-</html>`;
-  
-  return html;
 }
 
 function processExternalResources(html) {
