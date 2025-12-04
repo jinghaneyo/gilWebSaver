@@ -414,12 +414,16 @@ async function saveSelection() {
     });
 
     const title = document.title || 'webpage';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // 2025-12-04T10-30-45
+    const folderName = `${sanitizeFilename(title)}_${timestamp}`;
+
     console.log('🔍 HTML 생성 시작 (원본 레이아웃 유지 모드)...');
-    const content = await createSelectionHTML();
+    const content = await createSelectionHTML(folderName);
     console.log(`🔍 HTML 생성 완료 - 길이: ${content.length}자`);
 
-    downloadContent(content, `${sanitizeFilename(title)}_selection.html`);
-    console.log(`✅ Web Content Saver: ${selectedElements.size}개 요소 저장 완료 (원본 레이아웃 유지)`);
+    // 폴더 안에 HTML 파일 저장
+    downloadContent(content, `${folderName}/index.html`);
+    console.log(`✅ Web Content Saver: ${selectedElements.size}개 요소 저장 완료 (폴더: ${folderName})`);
 
   } catch (error) {
     console.error('Web Content Saver: 선택 영역 저장 실패:', error);
@@ -453,9 +457,9 @@ async function createFullHTML() {
   });
   
   console.log('🎨 CSS 수집 시작...');
-  
-  // 1. 모든 CSS 수집 및 외부 CSS 보존
-  await collectAndEmbedAllCSS(html);
+
+  // 1. 모든 CSS 수집 및 외부 CSS 보존 (전체 페이지는 폴더 없이)
+  await collectAndEmbedAllCSS(html, null, false);
   
   console.log('🎨 인라인 스타일 보존...');
   
@@ -485,7 +489,7 @@ async function createFullHTML() {
   return '<!DOCTYPE html>\n' + html.outerHTML;
 }
 
-async function createSelectionHTML() {
+async function createSelectionHTML(folderName) {
   console.log('🔍 createSelectionHTML 시작 - 조상 체인 유지 모드');
 
   if (selectedElements.size === 0) {
@@ -508,10 +512,7 @@ async function createSelectionHTML() {
   const html = document.documentElement.cloneNode(true);
   console.log('🎨 전체 페이지 복제 완료');
 
-  // 원본 요소에서 마커 제거 (복제 후 바로)
-  selectedElements.forEach(element => {
-    element.removeAttribute('data-wcs-selected-id');
-  });
+  // 원본 요소 마커는 레이아웃 스타일 보존 후에 제거 (아래에서 처리)
 
   // 복제된 HTML에서 선택된 요소들 찾기
   const clonedSelectedElements = new Set();
@@ -534,6 +535,7 @@ async function createSelectionHTML() {
 
   // 선택된 요소들과 그 조상들을 수집 (복제된 DOM 기준)
   const elementsToKeep = new Set();
+  const ancestorElements = new Set(); // 조상 요소들 (레이아웃 스타일 보존용)
 
   // 선택된 요소와 모든 자손 추가
   clonedSelectedElements.forEach(selected => {
@@ -549,13 +551,23 @@ async function createSelectionHTML() {
     let parent = selected.parentElement;
     while (parent) {
       elementsToKeep.add(parent);
+      ancestorElements.add(parent); // 조상으로 표시
       parent = parent.parentElement;
     }
   });
 
-  console.log(`🔍 유지할 요소 수: ${elementsToKeep.size}개`);
+  console.log(`🔍 유지할 요소 수: ${elementsToKeep.size}개, 조상 요소: ${ancestorElements.size}개`);
 
-  // 선택 마커 제거
+  // 조상 요소들에 레이아웃 스타일 인라인으로 보존 (원본 DOM 참조 필요)
+  console.log('🎨 조상 요소 레이아웃 스타일 보존 중...');
+  preserveAncestorLayoutStyles(ancestorElements, clonedSelectedElements, selectedIdentifiers);
+
+  // 원본 DOM에서 마커 제거 (레이아웃 스타일 보존 완료 후)
+  selectedElements.forEach(element => {
+    element.removeAttribute('data-wcs-selected-id');
+  });
+
+  // 복제된 DOM에서도 선택 마커 제거
   clonedSelectedElements.forEach(el => {
     el.removeAttribute('data-wcs-selected-id');
   });
@@ -620,8 +632,12 @@ async function createSelectionHTML() {
 
   console.log('🎨 CSS 수집 시작 (선택된 요소만)...');
 
-  // 선택된 요소에 적용된 CSS만 추출
-  await collectAndEmbedAllCSS(html, null, true);
+  // 선택된 요소에 적용된 CSS만 추출 (폴더명 전달)
+  await collectAndEmbedAllCSS(html, folderName, true);
+
+  // 텍스트 색상 강제 적용 (인라인 스타일)
+  console.log('🎨 텍스트 색상 인라인 스타일 적용...');
+  applyInlineTextStyles(html);
 
   console.log('🖼️ 이미지 처리 시작...');
 
@@ -1548,8 +1564,8 @@ async function downloadImageFile(url, filepath) {
 }
 
 // CSS 수집 - 선택된 요소에 적용된 스타일만 추출
-async function collectAndEmbedAllCSS(html, baseFilename, selectedOnly = false) {
-  console.log(`🎨 CSS 처리 시작 (선택 요소만: ${selectedOnly})`);
+async function collectAndEmbedAllCSS(html, folderName, selectedOnly = false) {
+  console.log(`🎨 CSS 처리 시작 (선택 요소만: ${selectedOnly}, 폴더: ${folderName})`);
 
   // 기존 모든 style 태그 제거
   html.querySelectorAll('style').forEach(style => {
@@ -1577,17 +1593,433 @@ async function collectAndEmbedAllCSS(html, baseFilename, selectedOnly = false) {
     extractedCSS = collectAllCSS();
   }
 
-  // CSS를 하나의 style 태그로 추가 (인라인)
-  if (extractedCSS.trim()) {
-    const unifiedStyle = document.createElement('style');
-    unifiedStyle.setAttribute('data-wcs-extracted', 'true');
-    unifiedStyle.textContent = extractedCSS;
-    head.appendChild(unifiedStyle);
+  // CSS 변수 추출 및 fallback 값 추가
+  const { cssVariableDefinitions, fallbackStyles } = extractCSSVariablesAndFallback();
 
-    console.log(`✅ CSS 추출 완료: ${Math.round(extractedCSS.length / 1024)}KB`);
+  // 전체 CSS 합치기
+  const fullCSS = cssVariableDefinitions + '\n' + extractedCSS + '\n' + fallbackStyles;
+
+  // CSS 파일명 생성 (폴더 안에 저장)
+  const cssFilename = 'styles.css';
+  const cssFullPath = folderName ? `${folderName}/${cssFilename}` : cssFilename;
+
+  // CSS를 별도 파일로 다운로드
+  console.log(`🎨 CSS 파일 다운로드 시작: ${cssFullPath}`);
+  await downloadCSSFile(fullCSS, cssFullPath);
+
+  // HTML에 CSS 링크 추가 (같은 폴더 내의 CSS 파일 참조)
+  const cssLink = document.createElement('link');
+  cssLink.setAttribute('rel', 'stylesheet');
+  cssLink.setAttribute('href', cssFilename); // 같은 폴더이므로 파일명만
+  head.appendChild(cssLink);
+
+  // 인라인 스타일로도 추가 (fallback - 외부 CSS 로드 실패 시)
+  const inlineStyle = document.createElement('style');
+  inlineStyle.setAttribute('data-wcs-inline-fallback', 'true');
+  inlineStyle.textContent = fallbackStyles;
+  head.appendChild(inlineStyle);
+
+  console.log(`✅ CSS 추출 완료: ${Math.round(fullCSS.length / 1024)}KB`);
+  console.log(`🎨 CSS 처리 완료 - 파일: ${cssFullPath}`);
+}
+
+// 모든 텍스트 요소에 인라인 스타일 적용 (최후의 수단)
+function applyInlineTextStyles(html) {
+  console.log('🎨 인라인 텍스트 스타일 적용 중...');
+
+  const textColor = '#202124';
+  const textElements = html.querySelectorAll('p, li, span, h1, h2, h3, h4, h5, h6, strong, b, em, i, div, td, th');
+
+  let count = 0;
+  textElements.forEach(el => {
+    // 기존 인라인 스타일에 color 추가
+    const currentStyle = el.getAttribute('style') || '';
+    if (!currentStyle.includes('color:')) {
+      el.setAttribute('style', currentStyle + (currentStyle ? '; ' : '') + `color: ${textColor} !important`);
+      count++;
+    }
+  });
+
+  console.log(`✅ ${count}개 요소에 인라인 텍스트 스타일 적용 완료`);
+}
+
+// 조상 요소들의 레이아웃 스타일을 인라인으로 보존
+function preserveAncestorLayoutStyles(ancestorElements, clonedSelectedElements, selectedIdentifiers) {
+  console.log('🎨 조상 요소 레이아웃 스타일 보존 시작...');
+
+  // 레이아웃에 중요한 CSS 속성들
+  const layoutProperties = [
+    // 박스 모델
+    'display', 'position', 'box-sizing',
+    'width', 'min-width', 'max-width',
+    'height', 'min-height', 'max-height',
+    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    // Flexbox
+    'flex', 'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis',
+    'justify-content', 'align-items', 'align-content', 'align-self', 'gap',
+    // Grid
+    'grid', 'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row', 'grid-gap',
+    // 기타 레이아웃
+    'float', 'clear', 'overflow', 'overflow-x', 'overflow-y',
+    'top', 'right', 'bottom', 'left', 'z-index',
+    // 배경 (레이아웃 시각화용)
+    'background-color', 'background',
+    // 테두리
+    'border', 'border-radius'
+  ];
+
+  let count = 0;
+
+  // 선택된 요소들의 원본 요소 및 조상들의 스타일 수집
+  selectedIdentifiers.forEach(uniqueId => {
+    // 원본 DOM에서 선택된 요소 찾기
+    const originalSelected = document.querySelector(`[data-wcs-selected-id="${uniqueId}"]`);
+    if (!originalSelected) return;
+
+    // 선택된 요소의 모든 조상 순회
+    let currentOriginal = originalSelected;
+    while (currentOriginal) {
+      try {
+        const computedStyle = window.getComputedStyle(currentOriginal);
+
+        // 복제된 DOM에서 대응하는 요소 찾기
+        let clonedElement = null;
+
+        // ID로 찾기
+        if (currentOriginal.id) {
+          clonedElement = ancestorElements.has(currentOriginal) ?
+            Array.from(ancestorElements).find(el => el.id === currentOriginal.id) : null;
+
+          if (!clonedElement) {
+            // 전체 복제된 DOM에서 찾기
+            const htmlRoot = Array.from(ancestorElements)[0]?.ownerDocument?.documentElement;
+            if (htmlRoot) {
+              clonedElement = htmlRoot.querySelector(`#${currentOriginal.id}`);
+            }
+          }
+        }
+
+        // data-wcs-selected-id로 찾기
+        const markerId = currentOriginal.getAttribute('data-wcs-selected-id');
+        if (!clonedElement && markerId) {
+          clonedElement = Array.from(clonedSelectedElements).find(el =>
+            el.getAttribute('data-wcs-selected-id') === markerId
+          );
+        }
+
+        // 찾은 복제된 요소에 스타일 적용
+        if (clonedElement) {
+          let inlineStyle = clonedElement.getAttribute('style') || '';
+          let addedStyles = [];
+
+          layoutProperties.forEach(prop => {
+            const value = computedStyle.getPropertyValue(prop);
+
+            // 기본값이 아니고 유효한 값만 추가
+            if (value &&
+                value !== 'auto' &&
+                value !== 'none' &&
+                value !== 'normal' &&
+                value !== 'initial' &&
+                value !== '0px' &&
+                value !== 'static' &&
+                value !== 'visible' &&
+                value !== 'content-box' &&
+                value !== 'rgba(0, 0, 0, 0)' &&
+                value !== 'transparent' &&
+                !inlineStyle.includes(prop + ':')) {
+              addedStyles.push(`${prop}: ${value}`);
+            }
+          });
+
+          if (addedStyles.length > 0) {
+            const newStyle = inlineStyle + (inlineStyle ? '; ' : '') + addedStyles.join('; ');
+            clonedElement.setAttribute('style', newStyle);
+            clonedElement.setAttribute('data-wcs-layout-preserved', 'true');
+            count++;
+          }
+        }
+      } catch (e) {
+        // 무시
+      }
+
+      currentOriginal = currentOriginal.parentElement;
+    }
+  });
+
+  // 복제된 DOM의 모든 조상 요소에 대해 추가 처리
+  ancestorElements.forEach(clonedAncestor => {
+    // 이미 처리된 요소는 건너뛰기
+    if (clonedAncestor.hasAttribute('data-wcs-layout-preserved')) return;
+
+    try {
+      // 원본 DOM에서 대응하는 요소 찾기
+      let originalElement = null;
+
+      // ID로 찾기
+      if (clonedAncestor.id) {
+        originalElement = document.getElementById(clonedAncestor.id);
+      }
+
+      // 태그명과 클래스로 찾기
+      if (!originalElement && clonedAncestor.tagName) {
+        const tagName = clonedAncestor.tagName.toLowerCase();
+        const classes = Array.from(clonedAncestor.classList || []).filter(c => !c.startsWith('wcs-')).join('.');
+
+        if (classes) {
+          const selector = `${tagName}.${classes.split('.').join('.')}`;
+          try {
+            const candidates = document.querySelectorAll(selector);
+            if (candidates.length >= 1) {
+              originalElement = candidates[0];
+            }
+          } catch (e) {
+            // 잘못된 선택자 무시
+          }
+        }
+      }
+
+      if (originalElement) {
+        const computedStyle = window.getComputedStyle(originalElement);
+        let inlineStyle = clonedAncestor.getAttribute('style') || '';
+        let addedStyles = [];
+
+        layoutProperties.forEach(prop => {
+          const value = computedStyle.getPropertyValue(prop);
+
+          if (value &&
+              value !== 'auto' &&
+              value !== 'none' &&
+              value !== 'normal' &&
+              value !== 'initial' &&
+              value !== '0px' &&
+              value !== 'static' &&
+              value !== 'visible' &&
+              value !== 'content-box' &&
+              value !== 'rgba(0, 0, 0, 0)' &&
+              value !== 'transparent' &&
+              !inlineStyle.includes(prop + ':')) {
+            addedStyles.push(`${prop}: ${value}`);
+          }
+        });
+
+        if (addedStyles.length > 0) {
+          const newStyle = inlineStyle + (inlineStyle ? '; ' : '') + addedStyles.join('; ');
+          clonedAncestor.setAttribute('style', newStyle);
+          count++;
+        }
+      }
+    } catch (e) {
+      console.warn('조상 요소 스타일 보존 실패:', e.message);
+    }
+  });
+
+  console.log(`✅ ${count}개 요소에 레이아웃 스타일 보존 완료`);
+}
+
+// CSS 변수 추출 및 Fallback 스타일 생성 함수
+function extractCSSVariablesAndFallback() {
+  console.log('🎨 CSS 변수 추출 중...');
+
+  let cssVariableDefinitions = '';
+
+  // :root, html, body에서 CSS 변수 수집
+  const rootElements = [document.documentElement, document.body];
+  const collectedVars = new Map();
+
+  rootElements.forEach(el => {
+    if (!el) return;
+    const computedStyle = window.getComputedStyle(el);
+
+    // 모든 CSS 속성에서 변수 찾기
+    for (let i = 0; i < computedStyle.length; i++) {
+      const prop = computedStyle[i];
+      if (prop.startsWith('--')) {
+        const value = computedStyle.getPropertyValue(prop).trim();
+        if (value && !collectedVars.has(prop)) {
+          collectedVars.set(prop, value);
+        }
+      }
+    }
+  });
+
+  // 스타일시트에서도 CSS 변수 추출
+  const styleSheets = Array.from(document.styleSheets);
+  for (const sheet of styleSheets) {
+    try {
+      if (!sheet.cssRules) continue;
+
+      for (const rule of sheet.cssRules) {
+        // :root, html, body 규칙에서 변수 추출
+        if (rule.type === CSSRule.STYLE_RULE &&
+            (rule.selectorText === ':root' ||
+             rule.selectorText === 'html' ||
+             rule.selectorText === 'body' ||
+             rule.selectorText?.includes(':root'))) {
+          const style = rule.style;
+          for (let i = 0; i < style.length; i++) {
+            const prop = style[i];
+            if (prop.startsWith('--')) {
+              const value = style.getPropertyValue(prop).trim();
+              if (value && !collectedVars.has(prop)) {
+                collectedVars.set(prop, value);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // CORS 제한으로 접근 불가
+    }
   }
 
-  console.log(`🎨 CSS 처리 완료`);
+  console.log(`🔍 ${collectedVars.size}개의 CSS 변수 발견`);
+
+  // CSS 변수 정의 생성
+  if (collectedVars.size > 0) {
+    let rootVars = ':root {\n';
+    collectedVars.forEach((value, prop) => {
+      rootVars += `  ${prop}: ${value};\n`;
+    });
+    rootVars += '}\n';
+    cssVariableDefinitions = rootVars;
+  }
+
+  // 공통 CSS 변수에 대한 fallback 값 추가 (Google, Gemini 등 주요 사이트용)
+  const fallbackCSS = `
+/* CSS 변수 Fallback 값 - 텍스트가 보이도록 보장 */
+:root {
+  /* 기본 색상 fallback */
+  --gem-sys-color--on-surface: #1f1f1f;
+  --gem-sys-color--on-surface-variant: #444746;
+  --gem-sys-color--surface: #ffffff;
+  --gem-sys-color--surface-container: #f0f4f9;
+  --gem-sys-color--surface-bright: #ffffff;
+  --gem-sys-color--primary: #0b57d0;
+  --gem-sys-color--primary-container: #d3e3fd;
+  --gem-sys-color--on-primary-container: #041e49;
+  --gem-sys-color--outline: #747775;
+  --gem-sys-color--outline-variant: #c4c7c5;
+
+  /* Material Design 변수 */
+  --mat-sys-on-surface: #1f1f1f;
+  --mat-sys-surface: #ffffff;
+  --mat-sys-primary: #0b57d0;
+
+  /* 일반 텍스트 색상 */
+  --text-color: #202124;
+  --primary-text-color: #202124;
+  --secondary-text-color: #5f6368;
+}
+
+/* 기본 텍스트 스타일 보장 */
+body, html {
+  color: #202124 !important;
+  background-color: #ffffff !important;
+}
+
+/* ===== 최고 우선순위 텍스트 색상 강제 적용 ===== */
+/* 모든 텍스트 요소에 검정색 강제 적용 (Angular 선택자보다 높은 우선순위) */
+body p, body li, body span, body div, body h1, body h2, body h3, body h4, body h5, body h6,
+body strong, body b, body em, body i, body a, body ul, body ol, body td, body th,
+html p, html li, html span, html div, html h1, html h2, html h3, html h4, html h5, html h6 {
+  color: #202124 !important;
+}
+
+/* 마크다운 콘텐츠 - 더 구체적인 선택자 */
+[class*="markdown"] p,
+[class*="markdown"] li,
+[class*="markdown"] span,
+[class*="markdown"] div,
+[class*="markdown"] h1,
+[class*="markdown"] h2,
+[class*="markdown"] h3,
+[class*="markdown"] h4,
+[class*="markdown"] h5,
+[class*="markdown"] h6,
+[class*="markdown"] strong,
+[class*="markdown"] b,
+[class*="markdown"] em,
+[class*="markdown"] i,
+[class*="markdown"] ul,
+[class*="markdown"] ol {
+  color: #202124 !important;
+}
+
+/* Angular 속성 선택자 포함 - 모든 _ngcontent 속성 */
+[class*="markdown"][class*="ng-"] p,
+[class*="markdown"][class*="ng-"] li,
+[class*="markdown"][class*="ng-"] span,
+[class*="markdown"][class*="ng-"] h1,
+[class*="markdown"][class*="ng-"] h2,
+[class*="markdown"][class*="ng-"] h3,
+[class*="markdown"][class*="ng-"] strong,
+[class*="markdown"][class*="ng-"] b {
+  color: #202124 !important;
+}
+
+/* Gemini 특화 스타일 - 최고 우선순위 */
+message-content p,
+message-content li,
+message-content span,
+message-content h1,
+message-content h2,
+message-content h3,
+message-content strong,
+message-content b,
+message-content div,
+model-response p,
+model-response li,
+model-response span,
+model-response div,
+response-container p,
+response-container li,
+response-container span,
+response-container div {
+  color: #202124 !important;
+}
+
+/* 모든 Angular 컴포넌트의 텍스트 */
+[_ngcontent-ng-c74756641] p,
+[_ngcontent-ng-c74756641] li,
+[_ngcontent-ng-c74756641] span,
+[_ngcontent-ng-c74756641] h1,
+[_ngcontent-ng-c74756641] h2,
+[_ngcontent-ng-c74756641] h3,
+[_ngcontent-ng-c74756641] strong,
+[_ngcontent-ng-c74756641] b,
+[_ngcontent-ng-c74756641] div {
+  color: #202124 !important;
+}
+
+/* 모든 _ngcontent 속성을 가진 요소 */
+[_ngcontent-ng-c3789852038],
+[_ngcontent-ng-c26717662],
+[_ngcontent-ng-c2091662065],
+[_ngcontent-ng-c1300031535],
+[_ngcontent-ng-c2585596823] {
+  color: #202124 !important;
+}
+
+/* data-path-to-node 속성을 가진 모든 요소 (Gemini 마크다운) */
+[data-path-to-node] {
+  color: #202124 !important;
+}
+
+[data-path-to-node] p,
+[data-path-to-node] li,
+[data-path-to-node] span,
+[data-path-to-node] strong,
+[data-path-to-node] b {
+  color: #202124 !important;
+}
+`;
+
+  return {
+    cssVariableDefinitions: cssVariableDefinitions,
+    fallbackStyles: fallbackCSS
+  };
 }
 
 // 선택된 요소에 적용된 CSS만 추출
