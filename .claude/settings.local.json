@@ -5,7 +5,11 @@
       "Read(C:\\Users\\user\\Downloads/**)",
       "Bash(dir \"C:\\Users\\user\\Downloads\\*.html\" /b /o:-d)",
       "Read(C:\\Users\\user\\Downloads/**)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(powershell -Command \"Get-Content ''f:\\05_회사프로젝트\\DIP\\기술자료\\07_사고재구성방향\\Google_Gemini_selection.html'' -TotalCount 100 | Select-Object -Last 50\")",
+      "Bash(powershell -Command \"[System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes(''f:\\05_회사프로젝트\\DIP\\기술자료\\07_사고재구성방향\\Google_Gemini_selection.html''))[0..200]\")",
+      "Bash(powershell:*)",
+      "Bash(xxd:*)"
     ],
     "deny": [],
     "ask": []

@@ -618,10 +618,10 @@ async function createSelectionHTML() {
   // 스크립트 제거
   html.querySelectorAll('script').forEach(script => script.remove());
 
-  console.log('🎨 CSS 수집 시작...');
+  console.log('🎨 CSS 수집 시작 (선택된 요소만)...');
 
-  // 모든 CSS 수집 및 임베드
-  await collectAndEmbedAllCSS(html);
+  // 선택된 요소에 적용된 CSS만 추출
+  await collectAndEmbedAllCSS(html, null, true);
 
   console.log('🖼️ 이미지 처리 시작...');
 
@@ -822,13 +822,13 @@ function convertImageToBase64(img) {
 function downloadContent(content, filename) {
   try {
     console.log(`🔍 downloadContent 시작 - 파일명: ${filename}, 내용 길이: ${content.length}자`);
-    
+
     // Chrome Downloads API를 통한 다운로드
     const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    
+
     console.log('🔍 Blob 생성 완료, background script로 다운로드 요청 중...');
-    
+
     // background script로 다운로드 요청
     chrome.runtime.sendMessage({
       action: 'downloadFile',
@@ -839,11 +839,11 @@ function downloadContent(content, filename) {
       if (response && response.success) {
         console.log('✅ Web Content Saver: HTML 파일 다운로드 완료 -', filename);
         console.log('🔍 HTML 파일 경로:', response.filePath);
-        
+
         // HTML 파일의 디렉토리 정보를 전역 변수에 저장
         window.htmlFileDirectory = response.filePath.replace(/[^\\\/]+$/, ''); // 파일명 제거하여 디렉토리만
         console.log('📁 HTML 파일 디렉토리:', window.htmlFileDirectory);
-        
+
         // PDF 변환 시도
         await tryConvertToPdf(response.filePath, filename);
       } else {
@@ -852,11 +852,68 @@ function downloadContent(content, filename) {
         fallbackDownload(content, filename);
       }
     });
-    
+
   } catch (error) {
     console.error('Web Content Saver: 다운로드 오류 -', error.message);
     // 실패시 기존 방식으로 시도
     fallbackDownload(content, filename);
+  }
+}
+
+// CSS 파일 다운로드 함수
+async function downloadCSSFile(cssContent, cssFilename) {
+  try {
+    console.log(`🎨 CSS 파일 다운로드 시작 - 파일명: ${cssFilename}, 크기: ${Math.round(cssContent.length / 1024)}KB`);
+
+    const blob = new Blob([cssContent], { type: 'text/css;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        action: 'downloadFile',
+        url: url,
+        filename: cssFilename
+      }, (response) => {
+        URL.revokeObjectURL(url);
+        if (response && response.success) {
+          console.log('✅ CSS 파일 다운로드 완료 -', cssFilename);
+          console.log('📁 CSS 파일 경로:', response.filePath);
+          resolve(true);
+        } else {
+          console.error('❌ CSS 파일 다운로드 실패:', response?.error || '알 수 없는 오류');
+          // 실패 시 fallback 다운로드
+          fallbackDownloadCSS(cssContent, cssFilename);
+          resolve(false);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('CSS 파일 다운로드 오류:', error.message);
+    fallbackDownloadCSS(cssContent, cssFilename);
+  }
+}
+
+// CSS fallback 다운로드
+function fallbackDownloadCSS(cssContent, cssFilename) {
+  try {
+    const blob = new Blob([cssContent], { type: 'text/css;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = cssFilename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+
+    console.log('✅ CSS 파일 fallback 다운로드 완료 -', cssFilename);
+  } catch (error) {
+    console.error('CSS fallback 다운로드 실패:', error.message);
   }
 }
 
@@ -1490,63 +1547,209 @@ async function downloadImageFile(url, filepath) {
   });
 }
 
-// CSS 수집 및 임베드 함수
-async function collectAndEmbedAllCSS(html) {
+// CSS 수집 - 선택된 요소에 적용된 스타일만 추출
+async function collectAndEmbedAllCSS(html, baseFilename, selectedOnly = false) {
+  console.log(`🎨 CSS 처리 시작 (선택 요소만: ${selectedOnly})`);
+
+  // 기존 모든 style 태그 제거
+  html.querySelectorAll('style').forEach(style => {
+    style.remove();
+  });
+
+  // 외부 CSS 링크도 제거 (선택 요소 CSS만 사용할 것이므로)
+  html.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+    link.remove();
+  });
+
+  // head에 charset 메타 태그 추가
+  const head = html.querySelector('head');
+  const charsetMeta = document.createElement('meta');
+  charsetMeta.setAttribute('charset', 'UTF-8');
+  head.insertBefore(charsetMeta, head.firstChild);
+
+  let extractedCSS = '';
+
+  if (selectedOnly) {
+    // 선택된 요소들에 적용된 CSS만 추출
+    extractedCSS = extractUsedCSS(html);
+  } else {
+    // 전체 페이지 저장 시 모든 CSS 수집
+    extractedCSS = collectAllCSS();
+  }
+
+  // CSS를 하나의 style 태그로 추가 (인라인)
+  if (extractedCSS.trim()) {
+    const unifiedStyle = document.createElement('style');
+    unifiedStyle.setAttribute('data-wcs-extracted', 'true');
+    unifiedStyle.textContent = extractedCSS;
+    head.appendChild(unifiedStyle);
+
+    console.log(`✅ CSS 추출 완료: ${Math.round(extractedCSS.length / 1024)}KB`);
+  }
+
+  console.log(`🎨 CSS 처리 완료`);
+}
+
+// 선택된 요소에 적용된 CSS만 추출
+function extractUsedCSS(html) {
+  console.log('🎨 선택된 요소의 CSS만 추출 중...');
+
+  // HTML 내 모든 요소 수집
+  const allElements = html.querySelectorAll('*');
+  const usedSelectors = new Set();
+  const usedCSS = [];
+
+  // 각 요소의 태그, 클래스, ID 수집
+  allElements.forEach(el => {
+    // 태그명
+    usedSelectors.add(el.tagName.toLowerCase());
+
+    // ID
+    if (el.id) {
+      usedSelectors.add('#' + el.id);
+    }
+
+    // 클래스
+    if (el.classList && el.classList.length > 0) {
+      el.classList.forEach(cls => {
+        if (cls && !cls.startsWith('wcs-')) {
+          usedSelectors.add('.' + cls);
+        }
+      });
+    }
+
+    // data 속성
+    Array.from(el.attributes).forEach(attr => {
+      if (attr.name.startsWith('data-') || attr.name.startsWith('_ng')) {
+        usedSelectors.add(`[${attr.name}]`);
+      }
+    });
+  });
+
+  console.log(`🔍 ${usedSelectors.size}개의 선택자 발견`);
+
+  // 모든 스타일시트에서 사용되는 규칙만 추출
   const styleSheets = Array.from(document.styleSheets);
-  console.log(`🎨 총 ${styleSheets.length}개 스타일시트 처리 중...`);
-  
-  // 기존 <link> 태그들을 모두 수집
-  const existingLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'));
-  console.log(`🔗 ${existingLinks.length}개 링크 태그 발견`);
-  
-  // 링크 태그들을 HTML에 복사
-  existingLinks.forEach(link => {
-    const newLink = document.createElement('link');
-    newLink.rel = 'stylesheet';
-    newLink.href = link.href;
-    if (link.media) newLink.media = link.media;
-    if (link.type) newLink.type = link.type;
-    html.querySelector('head').appendChild(newLink);
-    console.log(`✅ 링크 복사: ${link.href}`);
-  });
-  
-  // 인라인 스타일 수집
+
+  for (const sheet of styleSheets) {
+    try {
+      if (!sheet.cssRules) continue;
+
+      for (const rule of sheet.cssRules) {
+        if (isRuleUsed(rule, usedSelectors, allElements)) {
+          usedCSS.push(rule.cssText);
+        }
+      }
+    } catch (e) {
+      // CORS 제한으로 접근 불가
+      console.log(`⚠️ CSS 접근 불가: ${sheet.href}`);
+    }
+  }
+
+  // 인라인 스타일도 수집
   const inlineStyles = Array.from(document.querySelectorAll('style'));
-  console.log(`📝 ${inlineStyles.length}개 인라인 스타일 발견`);
-  
-  inlineStyles.forEach((style, index) => {
-    const newStyle = document.createElement('style');
-    newStyle.textContent = style.textContent;
-    if (style.media) newStyle.media = style.media;
-    if (style.type) newStyle.type = style.type;
-    html.querySelector('head').appendChild(newStyle);
-    console.log(`✅ 인라인 스타일 ${index + 1} 복사 완료`);
+  inlineStyles.forEach(style => {
+    if (style.sheet && style.sheet.cssRules) {
+      for (const rule of style.sheet.cssRules) {
+        if (isRuleUsed(rule, usedSelectors, allElements)) {
+          usedCSS.push(rule.cssText);
+        }
+      }
+    }
   });
-  
-  // 접근 가능한 스타일시트의 규칙들을 수집
-  let additionalCSS = '';
-  
+
+  // 중복 제거
+  const uniqueCSS = [...new Set(usedCSS)];
+
+  console.log(`✅ ${uniqueCSS.length}개의 CSS 규칙 추출됨`);
+
+  return uniqueCSS.join('\n');
+}
+
+// CSS 규칙이 사용되는지 확인
+function isRuleUsed(rule, usedSelectors, elements) {
+  // @font-face, @keyframes 등은 포함
+  if (rule.type === CSSRule.FONT_FACE_RULE) {
+    return true;
+  }
+  if (rule.type === CSSRule.KEYFRAMES_RULE) {
+    return true;
+  }
+  if (rule.type === CSSRule.MEDIA_RULE) {
+    // @media 규칙 내부의 규칙들 확인
+    if (rule.cssRules) {
+      for (const innerRule of rule.cssRules) {
+        if (isRuleUsed(innerRule, usedSelectors, elements)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 일반 스타일 규칙
+  if (rule.type === CSSRule.STYLE_RULE) {
+    const selector = rule.selectorText;
+    if (!selector) return false;
+
+    // 선택자를 개별로 분리
+    const selectors = selector.split(',').map(s => s.trim());
+
+    for (const sel of selectors) {
+      // 선택자가 HTML 내 요소와 매칭되는지 확인
+      try {
+        // querySelectorAll로 직접 매칭 테스트
+        const matched = document.querySelectorAll(sel);
+        if (matched.length > 0) {
+          // HTML 내에 해당 요소가 있는지 확인
+          for (const el of elements) {
+            if (el.matches && el.matches(sel)) {
+              return true;
+            }
+          }
+        }
+      } catch (e) {
+        // 잘못된 선택자는 무시
+      }
+
+      // 기본 선택자 매칭 (태그, 클래스, ID)
+      for (const used of usedSelectors) {
+        if (sel.includes(used)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+// 전체 CSS 수집 (전체 페이지 저장용)
+function collectAllCSS() {
+  let allCSS = '';
+
+  const inlineStyles = Array.from(document.querySelectorAll('style'));
+  inlineStyles.forEach((style) => {
+    if (style.textContent && style.textContent.trim()) {
+      allCSS += style.textContent + '\n';
+    }
+  });
+
+  const styleSheets = Array.from(document.styleSheets);
   for (const sheet of styleSheets) {
     try {
       if (sheet.cssRules) {
         const rules = Array.from(sheet.cssRules).map(rule => rule.cssText).join('\n');
-        additionalCSS += `\n/* From: ${sheet.href || 'inline'} */\n${rules}\n`;
-        console.log(`✅ CSS 규칙 수집: ${sheet.href || 'inline'} (${rules.length}자)`);
+        if (rules.trim()) {
+          allCSS += rules + '\n';
+        }
       }
     } catch (e) {
-      // CORS 제한으로 접근 불가한 경우 무시
-      console.log(`⚠️ CSS 규칙 접근 불가: ${sheet.href}`);
+      console.log(`⚠️ CSS 규칙 접근 불가 (CORS): ${sheet.href}`);
     }
   }
-  
-  // 수집된 추가 CSS가 있으면 추가
-  if (additionalCSS) {
-    const additionalStyle = document.createElement('style');
-    additionalStyle.setAttribute('data-wcs-additional', 'true');
-    additionalStyle.textContent = additionalCSS;
-    html.querySelector('head').appendChild(additionalStyle);
-    console.log(`🎨 추가 CSS 임베드 완료 (${additionalCSS.length}자)`);
-  }
+
+  return allCSS;
 }
 
 // 인라인 스타일 보존
