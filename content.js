@@ -490,7 +490,7 @@ async function createFullHTML() {
 }
 
 async function createSelectionHTML(folderName) {
-  console.log('🔍 createSelectionHTML 시작 - 조상 체인 유지 모드');
+  console.log('🔍 createSelectionHTML 시작 - 전체 저장 방식 기반');
 
   if (selectedElements.size === 0) {
     throw new Error('선택된 요소가 없습니다.');
@@ -508,11 +508,14 @@ async function createSelectionHTML(folderName) {
     idx++;
   });
 
-  // 전체 페이지를 복제 (마킹된 상태로)
+  // 전체 페이지를 복제 (전체 저장과 동일)
   const html = document.documentElement.cloneNode(true);
   console.log('🎨 전체 페이지 복제 완료');
 
-  // 원본 요소 마커는 레이아웃 스타일 보존 후에 제거 (아래에서 처리)
+  // 원본 DOM에서 마커 제거
+  selectedElements.forEach(element => {
+    element.removeAttribute('data-wcs-selected-id');
+  });
 
   // 복제된 HTML에서 선택된 요소들 찾기
   const clonedSelectedElements = new Set();
@@ -520,7 +523,7 @@ async function createSelectionHTML(folderName) {
     const clonedElement = html.querySelector(`[data-wcs-selected-id="${id}"]`);
     if (clonedElement) {
       clonedSelectedElements.add(clonedElement);
-      // 마커는 나중에 제거 (조상 체인 수집 후)
+      clonedElement.removeAttribute('data-wcs-selected-id'); // 마커 제거
       console.log(`🔍 복제된 요소 찾음: ${clonedElement.tagName}${clonedElement.id ? '#' + clonedElement.id : ''}`);
     } else {
       console.warn(`⚠️ 복제된 요소를 찾지 못함: ${id}`);
@@ -535,77 +538,29 @@ async function createSelectionHTML(folderName) {
 
   // 선택된 요소들과 그 조상들을 수집 (복제된 DOM 기준)
   const elementsToKeep = new Set();
-  const ancestorElements = new Set(); // 조상 요소들 (레이아웃 스타일 보존용)
 
   // 선택된 요소와 모든 자손 추가
   clonedSelectedElements.forEach(selected => {
     elementsToKeep.add(selected);
-    // 모든 자손 요소 추가
     selected.querySelectorAll('*').forEach(descendant => {
       elementsToKeep.add(descendant);
     });
   });
 
-  // 선택된 요소들의 모든 조상 추가 (복제된 DOM에서)
+  // 선택된 요소들의 모든 조상 추가
   clonedSelectedElements.forEach(selected => {
     let parent = selected.parentElement;
     while (parent) {
       elementsToKeep.add(parent);
-      ancestorElements.add(parent); // 조상으로 표시
       parent = parent.parentElement;
     }
   });
 
-  console.log(`🔍 유지할 요소 수: ${elementsToKeep.size}개, 조상 요소: ${ancestorElements.size}개`);
+  console.log(`🔍 유지할 요소 수: ${elementsToKeep.size}개`);
 
-  // 조상 요소들에 레이아웃 스타일 인라인으로 보존 (원본 DOM 참조 필요)
-  console.log('🎨 조상 요소 레이아웃 스타일 보존 중...');
-  preserveAncestorLayoutStyles(ancestorElements, clonedSelectedElements, selectedIdentifiers);
+  // === 전체 저장과 동일한 정리 작업 (먼저 수행) ===
 
-  // 원본 DOM에서 마커 제거 (레이아웃 스타일 보존 완료 후)
-  selectedElements.forEach(element => {
-    element.removeAttribute('data-wcs-selected-id');
-  });
-
-  // 복제된 DOM에서도 선택 마커 제거
-  clonedSelectedElements.forEach(el => {
-    el.removeAttribute('data-wcs-selected-id');
-  });
-
-  // body 내에서 불필요한 요소들 제거
-  const body = html.querySelector('body');
-  if (body) {
-    function removeUnneededElements(element) {
-      if (element.nodeType !== Node.ELEMENT_NODE) return;
-
-      // WCS 관련 요소는 무조건 제거
-      if (element.classList && (
-        element.classList.contains('wcs-tooltip') ||
-        element.classList.contains('wcs-selection-badge') ||
-        element.id === 'web-content-saver-styles'
-      )) {
-        element.remove();
-        return;
-      }
-
-      // 유지할 요소인지 확인
-      if (!elementsToKeep.has(element)) {
-        element.remove();
-        return;
-      }
-
-      // 유지할 요소면 선택 관련 클래스 제거하고 자식 처리
-      element.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
-
-      // 자식들을 배열로 복사하여 처리 (DOM 변경 중 안전하게)
-      Array.from(element.children).forEach(child => removeUnneededElements(child));
-    }
-
-    // body의 직계 자식들부터 처리
-    Array.from(body.children).forEach(child => removeUnneededElements(child));
-  }
-
-  // 선택 관련 스타일 제거
+  // 선택 관련 클래스 제거
   html.querySelectorAll('.wcs-hover, .wcs-selected, .wcs-selectable').forEach(el => {
     el.classList.remove('wcs-hover', 'wcs-selected', 'wcs-selectable');
   });
@@ -630,26 +585,52 @@ async function createSelectionHTML(folderName) {
   // 스크립트 제거
   html.querySelectorAll('script').forEach(script => script.remove());
 
-  console.log('🎨 CSS 수집 시작 (선택된 요소만)...');
+  // === 선택되지 않은 콘텐츠만 제거 ===
+  const body = html.querySelector('body');
+  if (body) {
+    function removeUnneededElements(element) {
+      if (element.nodeType !== Node.ELEMENT_NODE) return;
 
-  // 선택된 요소에 적용된 CSS만 추출 (폴더명 전달)
-  await collectAndEmbedAllCSS(html, folderName, true);
+      // 유지할 요소가 아니면 제거
+      if (!elementsToKeep.has(element)) {
+        element.remove();
+        return;
+      }
 
-  // 텍스트 색상 강제 적용 (인라인 스타일)
-  console.log('🎨 텍스트 색상 인라인 스타일 적용...');
-  applyInlineTextStyles(html);
+      // 자식들을 배열로 복사하여 처리 (DOM 변경 중 안전하게)
+      Array.from(element.children).forEach(child => removeUnneededElements(child));
+    }
+
+    // body의 직계 자식들부터 처리
+    Array.from(body.children).forEach(child => removeUnneededElements(child));
+  }
+
+  // === 전체 저장과 동일한 CSS/이미지 처리 ===
+  console.log('🎨 CSS 수집 시작...');
+
+  // 전체 CSS 수집 (전체 저장과 동일 - selectedOnly: false)
+  await collectAndEmbedAllCSS(html, folderName, false);
 
   console.log('🖼️ 이미지 처리 시작...');
 
-  // 선택된 요소들 내의 이미지만 처리
-  for (const element of clonedSelectedElements) {
-    await downloadAndReplaceImages(element);
-  }
+  // 전체 HTML에 대해 이미지 처리 (전체 저장과 동일)
+  await downloadAndReplaceImages(html);
 
-  // CSS 배경 이미지 처리 (선택된 요소들만)
-  for (const element of clonedSelectedElements) {
-    await processCSSBackgroundImagesForElement(element);
-  }
+  // CSS 배경 이미지 처리
+  await processCSSBackgroundImages(html);
+
+  // 외부 리소스 처리
+  processExternalResources(html);
+
+  // 최소한의 보정 CSS 추가 (전체 저장과 동일)
+  const minimalFixCSS = document.createElement('style');
+  minimalFixCSS.setAttribute('data-wcs-minimal-fix', 'true');
+  minimalFixCSS.textContent = `
+    /* 최소한의 보정 CSS */
+    img { max-width: 100%; height: auto; }
+    .blind, .u_skip { position: absolute !important; clip: rect(0,0,0,0) !important; }
+  `;
+  html.querySelector('head').appendChild(minimalFixCSS);
 
   // 출처 정보 추가 (상단에)
   const sourceInfo = document.createElement('div');
@@ -682,7 +663,7 @@ async function createSelectionHTML(folderName) {
     htmlBody.style.paddingTop = (existingPaddingTop + 40) + 'px';
   }
 
-  console.log('✅ 조상 체인 유지 선택 HTML 생성 완료 (파일 크기 최적화)');
+  console.log('✅ 선택 HTML 생성 완료 (전체 저장 방식 기반)');
 
   // DOCTYPE 포함한 완전한 HTML 반환
   return '<!DOCTYPE html>\n' + html.outerHTML;
@@ -1643,13 +1624,112 @@ function applyInlineTextStyles(html) {
   console.log(`✅ ${count}개 요소에 인라인 텍스트 스타일 적용 완료`);
 }
 
+// 조상 요소들의 레이아웃 처리 (원본 너비 유지)
+function fixAncestorWidths(ancestorElements) {
+  // 원본 레이아웃을 유지하기 위해 너비 관련 수정을 하지 않음
+  // 숨김 처리 등 필수적인 클래스만 제거
+  const restrictiveClasses = [
+    'w-0', 'h-0', 'w-px', 'h-px',
+    'max-w-0', 'max-h-0',
+    'min-w-0', 'min-h-0',
+    'overflow-hidden', 'overflow-x-hidden', 'overflow-y-hidden'
+  ];
+
+  let count = 0;
+  ancestorElements.forEach(el => {
+    if (!el.classList) return;
+
+    // 숨김/제로 크기 클래스만 제거
+    restrictiveClasses.forEach(cls => {
+      if (el.classList.contains(cls)) {
+        el.classList.remove(cls);
+      }
+    });
+
+    count++;
+  });
+
+  console.log(`✅ ${count}개 조상 요소 처리 완료 (원본 너비 유지)`);
+}
+
+// 인라인 스타일에서 선택 관련 스타일만 제거 (원본 레이아웃 유지)
+function removeFixedSizeStyles(ancestorElements, clonedSelectedElements) {
+  // 제거할 CSS 속성들 (선택 표시 관련만 - outline과 선택 배경색)
+  const propsToRemove = [
+    'outline', 'outline-offset', 'outline-width', 'outline-color', 'outline-style'
+  ];
+
+  // 선택 표시 배경색 제거 (rgba(76, 175, 80, 0.15))
+  function removeSelectionBackground(el) {
+    const style = el.getAttribute('style');
+    if (!style) return;
+
+    // 선택 표시용 녹색 배경 제거
+    let newStyle = style.replace(/background-color\s*:\s*rgba\s*\(\s*76\s*,\s*175\s*,\s*80\s*,\s*[^)]+\)\s*!?important?\s*;?/gi, '');
+    newStyle = newStyle.replace(/background\s*:\s*rgba\s*\(\s*76\s*,\s*175\s*,\s*80\s*,\s*[^)]+\)\s*!?important?\s*;?/gi, '');
+
+    if (newStyle !== style) {
+      newStyle = newStyle.replace(/;\s*;/g, ';').replace(/^\s*;|;\s*$/g, '').trim();
+      if (newStyle) {
+        el.setAttribute('style', newStyle);
+      } else {
+        el.removeAttribute('style');
+      }
+    }
+  }
+
+  // 속성 제거 함수
+  function removePropsFromElement(el) {
+    const style = el.getAttribute('style');
+    if (!style) return;
+
+    let newStyle = style;
+    propsToRemove.forEach(prop => {
+      // 각 속성을 정규식으로 제거 (속성명: 값; 형태)
+      const regex = new RegExp(`${prop}\\s*:\\s*[^;]+;?\\s*`, 'gi');
+      newStyle = newStyle.replace(regex, '');
+    });
+
+    // 정리: 연속된 세미콜론, 앞뒤 공백 제거
+    newStyle = newStyle.replace(/;\s*;/g, ';').replace(/^\s*;|;\s*$/g, '').trim();
+
+    if (newStyle) {
+      el.setAttribute('style', newStyle);
+    } else {
+      el.removeAttribute('style');
+    }
+  }
+
+  // 조상 요소들의 인라인 스타일에서 선택 관련 스타일 제거
+  let count = 0;
+  ancestorElements.forEach(el => {
+    removePropsFromElement(el);
+    removeSelectionBackground(el);
+    count++;
+  });
+
+  // 선택된 요소들의 인라인 스타일에서도 선택 관련 스타일 제거
+  clonedSelectedElements.forEach(el => {
+    removePropsFromElement(el);
+    removeSelectionBackground(el);
+    // 자손 요소들도 처리
+    el.querySelectorAll('*').forEach(descendant => {
+      removePropsFromElement(descendant);
+      removeSelectionBackground(descendant);
+    });
+    count++;
+  });
+
+  console.log(`✅ ${count}개 요소에서 선택 관련 스타일 제거 완료`);
+}
+
 // 조상 요소들의 레이아웃 스타일을 인라인으로 보존
 function preserveAncestorLayoutStyles(ancestorElements, clonedSelectedElements, selectedIdentifiers) {
   console.log('🎨 조상 요소 레이아웃 스타일 보존 시작...');
 
-  // 레이아웃에 중요한 CSS 속성들
+  // 레이아웃에 중요한 CSS 속성들 (원본 레이아웃 유지를 위해 모든 크기 속성 포함)
   const layoutProperties = [
-    // 박스 모델
+    // 박스 모델 (크기 속성 포함 - 원본 레이아웃 유지)
     'display', 'position', 'box-sizing',
     'width', 'min-width', 'max-width',
     'height', 'min-height', 'max-height',
